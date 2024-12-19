@@ -301,12 +301,10 @@ static CGFloat SDImageScaleFromPath(NSString *string) {
         return nil;
     }
     if (self.isAllFramesLoaded) {
-        SDImageFrame *imageFrame = [self.loadedAnimatedImageFrames objectAtIndex:index];
-        frame = imageFrame.image;
-    } else {
-        frame = [self.animatedCoder animatedImageFrameAtIndex:index];
-    }    
-    return frame;
+        SDImageFrame *frame = [self.loadedAnimatedImageFrames objectAtIndex:index];
+        return frame.image;
+    }
+    return [self.animatedCoder animatedImageFrameAtIndex:index];
 }
 
 - (NSTimeInterval)animatedImageDurationAtIndex:(NSUInteger)index {
