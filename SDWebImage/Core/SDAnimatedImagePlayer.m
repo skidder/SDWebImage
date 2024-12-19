@@ -216,10 +216,13 @@
     
     // Check if we need to display new frame firstly
     if (self.needsDisplayWhenImageBecomesAvailable) {
+        NSLog(@"[SDAnimatedImagePlayer] needsDisplayWhenImageBecomesAvailable getting frame %lu", (unsigned long)currentFrameIndex);
         UIImage *currentFrame = [self.framePool frameAtIndex:currentFrameIndex];
+        // UIImage *currentFrame = [self.framePool frameAtIndex:0];
         
         // Update the current frame
         if (currentFrame) {
+            NSLog(@"[SDAnimatedImagePlayer] needsDisplayWhenImageBecomesAvailable got frame %lu", (unsigned long)currentFrameIndex);
             // Update the current frame immediately
             self.currentFrame = currentFrame;
             [self handleFrameChange];
@@ -228,12 +231,14 @@
             self.needsDisplayWhenImageBecomesAvailable = NO;
         }
         else {
+            NSLog(@"[SDAnimatedImagePlayer] needsDisplayWhenImageBecomesAvailable missed frame %lu", (unsigned long)currentFrameIndex);
             self.bufferMiss = YES;
         }
     }
     
     // Check if we have the frame buffer
     if (!self.bufferMiss) {
+        NSLog(@"[SDAnimatedImagePlayer] bufferMiss is NO");
         // Then check if timestamp is reached
         self.currentTime += duration;
         NSTimeInterval currentDuration = [self.animatedProvider animatedImageDurationAtIndex:currentFrameIndex];
@@ -278,6 +283,15 @@
     
     [self prefetchFrameAtIndex:currentFrameIndex
                      nextIndex:nextFrameIndex];
+    
+    NSTimeInterval now = CACurrentMediaTime();
+    
+    // Log the display refresh with timing details
+    NSLog(@"[SDAnimatedImagePlayer] Display refresh at %.2fms, current frame: %lu, duration: %.2fms, currentTime: %.2fms", 
+          now * 1000, // Convert to milliseconds
+          self.currentFrameIndex,
+          displayLink.duration * 1000,
+          self.currentTime * 1000);
 }
 
 // Check if we should prefetch next frame or current frame
