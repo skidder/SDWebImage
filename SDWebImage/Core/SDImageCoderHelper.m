@@ -428,9 +428,39 @@ static const CGFloat kDestSeemOverlap = 2.0f;   // the numbers of pixels to over
     if (!cgImage) {
         return NULL;
     }
+    NSLog(@"[SDImageCoderHelper] Starting decode for image %p", cgImage);
+    
+    // Check if image is already in optimal format for rendering
+    BOOL needsDecode = NO;
+    size_t bitsPerComponent = CGImageGetBitsPerComponent(cgImage);
+    size_t bitsPerPixel = CGImageGetBitsPerPixel(cgImage);
+    size_t bytesPerRow = CGImageGetBytesPerRow(cgImage);
+    CGBitmapInfo bitmapInfo = CGImageGetBitmapInfo(cgImage);
+    BOOL hasAlpha = [self CGImageContainsAlpha:cgImage];
+    
+    // If RGB/RGBA format with proper bit depth and alignment, we can skip decode
+    BOOL hasProperBitDepth = (bitsPerComponent == 8 && bitsPerPixel == 32);
+    BOOL hasProperAlpha = hasAlpha ? 
+        ((bitmapInfo & kCGBitmapAlphaInfoMask) == kCGImageAlphaPremultipliedFirst) :
+        ((bitmapInfo & kCGBitmapAlphaInfoMask) == kCGImageAlphaNone ||
+         (bitmapInfo & kCGBitmapAlphaInfoMask) == kCGImageAlphaNoneSkipLast);
+    // Accept any row bytes that's at least width * bytesPerPixel
+    BOOL hasProperAlignment = (bytesPerRow >= (CGImageGetWidth(cgImage) * 4));
+    
+    if (!hasProperBitDepth || !hasProperAlpha || !hasProperAlignment) {
+        needsDecode = YES;
+        NSLog(@"[SDImageCoderHelper] Image needs decode - bits:%zu/%zu, row:%zu, info:%lu, hasAlpha:%d", 
+            bitsPerComponent, bitsPerPixel, bytesPerRow, (unsigned long)bitmapInfo, hasAlpha);
+    } else {
+        NSLog(@"[SDImageCoderHelper] Image already in optimal format, skipping decode");
+        CGImageRetain(cgImage);
+        return cgImage;
+    }
+
     size_t width = CGImageGetWidth(cgImage);
     size_t height = CGImageGetHeight(cgImage);
     if (width == 0 || height == 0) return NULL;
+    
     size_t newWidth;
     size_t newHeight;
     switch (orientation) {
@@ -450,21 +480,29 @@ static const CGFloat kDestSeemOverlap = 2.0f;   // the numbers of pixels to over
             break;
     }
     
-    BOOL hasAlpha = [self CGImageContainsAlpha:cgImage];
-    // kCGImageAlphaNone is not supported in CGBitmapContextCreate.
-    // Check #3330 for more detail about why this bitmap is choosen.
-    // From v5.17.0, use runtime detection of bitmap info instead of hardcode.
-    CGBitmapInfo bitmapInfo = [SDImageCoderHelper preferredPixelFormat:hasAlpha].bitmapInfo;
-    CGContextRef context = CGBitmapContextCreate(NULL, newWidth, newHeight, 8, 0, [self colorSpaceGetDeviceRGB], bitmapInfo);
+    NSLog(@"[SDImageCoderHelper] Creating context for image %p, size: %zux%zu, hasAlpha: %d", cgImage, newWidth, newHeight, hasAlpha);
+    CGBitmapInfo contextBitmapInfo = [SDImageCoderHelper preferredPixelFormat:hasAlpha].bitmapInfo;
+    // Calculate aligned bytes per row
+    size_t bytesPerPixel = 4; // Always use 32-bit pixels (RGBA/RGBX)
+    size_t minBytesPerRow = newWidth * bytesPerPixel;
+    size_t alignedBytesPerRow = SDByteAlign(minBytesPerRow, 32);
+    CGContextRef context = CGBitmapContextCreate(NULL, newWidth, newHeight, 8, alignedBytesPerRow, 
+        [self colorSpaceGetDeviceRGB], contextBitmapInfo);
     if (!context) {
+        NSLog(@"[SDImageCoderHelper] Failed to create context for image %p", cgImage);
         return NULL;
     }
     
+    CFAbsoluteTime drawStart = CFAbsoluteTimeGetCurrent();
     // Apply transform
     CGAffineTransform transform = SDCGContextTransformFromOrientation(orientation, CGSizeMake(newWidth, newHeight));
     CGContextConcatCTM(context, transform);
-    CGContextDrawImage(context, CGRectMake(0, 0, width, height), cgImage); // The rect is bounding box of CGImage, don't swap width & height
+    CGContextDrawImage(context, CGRectMake(0, 0, width, height), cgImage);
+    NSLog(@"[SDImageCoderHelper] Drawing took %.2fms for image %p", (CFAbsoluteTimeGetCurrent() - drawStart) * 1000, cgImage);
+    
+    CFAbsoluteTime createStart = CFAbsoluteTimeGetCurrent();
     CGImageRef newImageRef = CGBitmapContextCreateImage(context);
+    NSLog(@"[SDImageCoderHelper] Context image creation took %.2fms for image %p", (CFAbsoluteTimeGetCurrent() - createStart) * 1000, cgImage);
     CGContextRelease(context);
     
     return newImageRef;

@@ -422,22 +422,28 @@ static BOOL SDImageIOPNGPluginBuggyNeedWorkaround(void) {
 }
 
 + (UIImage *)createFrameAtIndex:(NSUInteger)index source:(CGImageSourceRef)source scale:(CGFloat)scale preserveAspectRatio:(BOOL)preserveAspectRatio thumbnailSize:(CGSize)thumbnailSize lazyDecode:(BOOL)lazyDecode animatedImage:(BOOL)animatedImage {
+    NSLog(@"[SDImageIOAnimatedCoder] Start decoding frame %lu", (unsigned long)index);
+
     // `animatedImage` means called from `SDAnimatedImageProvider.animatedImageFrameAtIndex`
     NSDictionary *options;
     if (animatedImage) {
         if (!lazyDecode) {
+            NSLog(@"[SDImageIOAnimatedCoder] Using immediate decode for frame %lu", (unsigned long)index);
             options = @{
                 // image decoding and caching should happen at image creation time.
                 (__bridge NSString *)kCGImageSourceShouldCacheImmediately : @(YES),
             };
         } else {
+            NSLog(@"[SDImageIOAnimatedCoder] Using lazy decode for frame %lu", (unsigned long)index);
             options = @{
                 // image decoding will happen at rendering time
                 (__bridge NSString *)kCGImageSourceShouldCacheImmediately : @(NO),
             };
         }
     }
+
     // Parse the image properties
+    NSLog(@"[SDImageIOAnimatedCoder] Getting properties for frame %lu", (unsigned long)index);
     NSDictionary *properties = (__bridge_transfer NSDictionary *)CGImageSourceCopyPropertiesAtIndex(source, index, NULL);
     CGFloat pixelWidth = [properties[(__bridge NSString *)kCGImagePropertyPixelWidth] doubleValue];
     CGFloat pixelHeight = [properties[(__bridge NSString *)kCGImagePropertyPixelHeight] doubleValue];
@@ -446,6 +452,14 @@ static BOOL SDImageIOPNGPluginBuggyNeedWorkaround(void) {
     if (exifOrientationValue != NULL) {
         exifOrientation = [exifOrientationValue unsignedIntValue];
     }
+    
+    // Log WebP specific properties
+    NSDictionary *webPProps = properties[(__bridge NSString *)kCGImagePropertyWebPDictionary];
+    if (webPProps) {
+        NSLog(@"[SDImageIOAnimatedCoder] WebP properties for frame %lu: %@", (unsigned long)index, webPProps);
+    }
+
+    NSLog(@"[SDImageIOAnimatedCoder] Frame %lu dimensions: %.0f x %.0f", (unsigned long)index, pixelWidth, pixelHeight);
 
     NSMutableDictionary *decodingOptions;
     if (options) {
@@ -453,8 +467,18 @@ static BOOL SDImageIOPNGPluginBuggyNeedWorkaround(void) {
     } else {
         decodingOptions = [NSMutableDictionary dictionary];
     }
+
+    // Use supported options to optimize decoding
+    decodingOptions[(__bridge NSString *)kCGImageSourceShouldCache] = @(NO);
+    decodingOptions[(__bridge NSString *)kCGImageSourceShouldAllowFloat] = @(NO);
+
     CGImageRef imageRef;
     BOOL createFullImage = thumbnailSize.width == 0 || thumbnailSize.height == 0 || pixelWidth == 0 || pixelHeight == 0 || (pixelWidth <= thumbnailSize.width && pixelHeight <= thumbnailSize.height);
+    
+    NSLog(@"[SDImageIOAnimatedCoder] Frame %lu creating %@", (unsigned long)index, createFullImage ? @"full image" : @"thumbnail");
+    
+    CFAbsoluteTime startTime = CFAbsoluteTimeGetCurrent();
+    
     if (createFullImage) {
         imageRef = CGImageSourceCreateImageAtIndex(source, index, (__bridge CFDictionaryRef)[decodingOptions copy]);
     } else {
@@ -475,66 +499,52 @@ static BOOL SDImageIOPNGPluginBuggyNeedWorkaround(void) {
         decodingOptions[(__bridge NSString *)kCGImageSourceCreateThumbnailFromImageAlways] = @(YES);
         imageRef = CGImageSourceCreateThumbnailAtIndex(source, index, (__bridge CFDictionaryRef)[decodingOptions copy]);
     }
+    
+    CFAbsoluteTime createTime = CFAbsoluteTimeGetCurrent() - startTime;
+    NSLog(@"[SDImageIOAnimatedCoder] Frame %lu creation took %.2fms", (unsigned long)index, createTime * 1000);
+
     if (!imageRef) {
+        NSLog(@"[SDImageIOAnimatedCoder] Failed to create frame %lu", (unsigned long)index);
         return nil;
     }
-    // Thumbnail image post-process
-    if (!createFullImage) {
-        if (preserveAspectRatio) {
-            // kCGImageSourceCreateThumbnailWithTransform will apply EXIF transform as well, we should not apply twice
-            exifOrientation = kCGImagePropertyOrientationUp;
-        } else {
-            // `CGImageSourceCreateThumbnailAtIndex` take only pixel dimension, if not `preserveAspectRatio`, we should manual scale to the target size
-            CGImageRef scaledImageRef = [SDImageCoderHelper CGImageCreateScaled:imageRef size:thumbnailSize];
-            if (scaledImageRef) {
-                CGImageRelease(imageRef);
-                imageRef = scaledImageRef;
-            }
-        }
-    }
+
     // Check whether output CGImage is decoded
     BOOL isLazy = [SDImageCoderHelper CGImageIsLazy:imageRef];
     if (!lazyDecode) {
         if (isLazy) {
-            // Use CoreGraphics to trigger immediately decode to drop lazy CGImage
+            NSLog(@"[SDImageIOAnimatedCoder] Frame %lu needs force decode", (unsigned long)index);
+            startTime = CFAbsoluteTimeGetCurrent();
+            
+            // Log image details before decode
+            size_t bitsPerComponent = CGImageGetBitsPerComponent(imageRef);
+            size_t bitsPerPixel = CGImageGetBitsPerPixel(imageRef);
+            size_t bytesPerRow = CGImageGetBytesPerRow(imageRef);
+            CGBitmapInfo bitmapInfo = CGImageGetBitmapInfo(imageRef);
+            NSLog(@"[SDImageIOAnimatedCoder] Frame %lu pre-decode - bpc: %zu, bpp: %zu, bpr: %zu, bitmap info: %lu", 
+                (unsigned long)index, bitsPerComponent, bitsPerPixel, bytesPerRow, (unsigned long)bitmapInfo);
+            
             CGImageRef decodedImageRef = [SDImageCoderHelper CGImageCreateDecoded:imageRef];
             if (decodedImageRef) {
+                // Log image details after decode
+                size_t newBitsPerComponent = CGImageGetBitsPerComponent(decodedImageRef);
+                size_t newBitsPerPixel = CGImageGetBitsPerPixel(decodedImageRef);
+                size_t newBytesPerRow = CGImageGetBytesPerRow(decodedImageRef);
+                CGBitmapInfo newBitmapInfo = CGImageGetBitmapInfo(decodedImageRef);
+                NSLog(@"[SDImageIOAnimatedCoder] Frame %lu post-decode - bpc: %zu, bpp: %zu, bpr: %zu, bitmap info: %lu",
+                    (unsigned long)index, newBitsPerComponent, newBitsPerPixel, newBytesPerRow, (unsigned long)newBitmapInfo);
+                
                 CGImageRelease(imageRef);
                 imageRef = decodedImageRef;
                 isLazy = NO;
             }
-        }
-    } else if (animatedImage) {
-        // iOS 15+, CGImageRef now retains CGImageSourceRef internally. To workaround its thread-safe issue, we have to strip CGImageSourceRef, using Force-Decode (or have to use SPI `CGImageSetImageSource`), See: https://github.com/SDWebImage/SDWebImage/issues/3273
-        if (@available(iOS 15, tvOS 15, *)) {
-            // User pass `lazyDecode == YES`, but we still have to strip the CGImageSourceRef
-            // CGImageRef newImageRef = CGImageCreateCopy(imageRef); // This one does not strip the CGImageProperty
-            CGImageRef newImageRef = SDCGImageCreateCopy(imageRef);
-            if (newImageRef) {
-                CGImageRelease(imageRef);
-                imageRef = newImageRef;
-            }
-#if SD_CHECK_CGIMAGE_RETAIN_SOURCE
-            // Assert here to check CGImageRef should not retain the CGImageSourceRef and has possible thread-safe issue (this is behavior on iOS 15+)
-            // If assert hit, fire issue to https://github.com/SDWebImage/SDWebImage/issues and we update the condition for this behavior check
-            static dispatch_once_t onceToken;
-            dispatch_once(&onceToken, ^{
-                SDCGImageGetImageSource = dlsym(RTLD_DEFAULT, "CGImageGetImageSource");
-            });
-            if (SDCGImageGetImageSource) {
-                NSCAssert(!SDCGImageGetImageSource(imageRef), @"Animated Coder created CGImageRef should not retain CGImageSourceRef, which may cause thread-safe issue without lock");
-            }
-#endif
+            
+            CFAbsoluteTime decodeTime = CFAbsoluteTimeGetCurrent() - startTime;
+            NSLog(@"[SDImageIOAnimatedCoder] Frame %lu force decode took %.2fms", (unsigned long)index, decodeTime * 1000);
         }
     }
-    // :)
-    CFStringRef uttype = CGImageSourceGetType(source);
-    SDImageFormat imageFormat = [NSData sd_imageFormatFromUTType:uttype];
-    if (imageFormat == SDImageFormatPNG && SDCGImageIs8Bit(imageRef) && SDImageIOPNGPluginBuggyNeedWorkaround()) {
-        CGImageRef newImageRef = SDImageIOPNGPluginBuggyCreateWorkaround(imageRef);
-        CGImageRelease(imageRef);
-        imageRef = newImageRef;
-    }
+
+    // Create final UIImage
+    startTime = CFAbsoluteTimeGetCurrent();
     
 #if SD_UIKIT || SD_WATCH
     UIImageOrientation imageOrientation = [SDImageCoderHelper imageOrientationFromEXIFOrientation:exifOrientation];
@@ -542,9 +552,14 @@ static BOOL SDImageIOPNGPluginBuggyNeedWorkaround(void) {
 #else
     UIImage *image = [[UIImage alloc] initWithCGImage:imageRef scale:scale orientation:exifOrientation];
 #endif
+    
+    CFAbsoluteTime finalizeTime = CFAbsoluteTimeGetCurrent() - startTime;
+    NSLog(@"[SDImageIOAnimatedCoder] Frame %lu UIImage creation took %.2fms", (unsigned long)index, finalizeTime * 1000);
+    
     CGImageRelease(imageRef);
     image.sd_isDecoded = !isLazy;
     
+    NSLog(@"[SDImageIOAnimatedCoder] Completed frame %lu decode, lazy: %d", (unsigned long)index, isLazy);
     return image;
 }
 
