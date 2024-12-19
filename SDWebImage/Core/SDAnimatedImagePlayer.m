@@ -199,6 +199,14 @@
     NSUInteger currentFrameIndex = self.currentFrameIndex;
     NSUInteger nextFrameIndex = (currentFrameIndex + 1) % totalFrameCount;
     
+    NSTimeInterval targetDuration = [self.animatedProvider animatedImageDurationAtIndex:currentFrameIndex] / playbackRate;
+    NSTimeInterval actualDuration = self.currentTime;
+    if (actualDuration > targetDuration + 0.016) { // Allow 16ms threshold
+        NSLog(@"[SDAnimatedImagePlayer] Warning: Large frame delay detected - actual: %.2fms, target: %.2fms", 
+            actualDuration * 1000,
+            targetDuration * 1000);
+    }
+    
     if (self.playbackMode == SDAnimatedImagePlaybackModeReverse) {
         nextFrameIndex = currentFrameIndex == 0 ? (totalFrameCount - 1) : (currentFrameIndex - 1) % totalFrameCount;
         

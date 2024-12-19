@@ -97,16 +97,6 @@ SD_LOCK_DECLARE_STATIC(_providerFramePoolMapLock);
 }
 
 - (void)prefetchFrameAtIndex:(NSUInteger)index {
-    @synchronized (self) {
-        NSUInteger frameCount = self.frameBuffer.count;
-        if (frameCount > self.maxBufferCount) {
-            // Remove the frame buffer if need
-            // TODO, use LRU or better algorithm to detect which frames to clear
-            self.frameBuffer[@(index - 1)] = nil;
-            self.frameBuffer[@(index + 1)] = nil;
-        }
-    }
-    
     if (self.fetchQueue.operationCount == 0) {
         // Prefetch next frame in background queue
         id<SDAnimatedImageProvider> animatedProvider = self.provider;
@@ -117,7 +107,6 @@ SD_LOCK_DECLARE_STATIC(_providerFramePoolMapLock);
                 return;
             }
             UIImage *frame = [animatedProvider animatedImageFrameAtIndex:index];
-            
             [self setFrame:frame atIndex:index];
         }];
         [self.fetchQueue addOperation:operation];

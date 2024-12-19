@@ -300,11 +300,22 @@ static CGFloat SDImageScaleFromPath(NSString *string) {
     if (index >= self.animatedImageFrameCount) {
         return nil;
     }
+    
+    CFTimeInterval startTime = CACurrentMediaTime();
+    UIImage *frame;
     if (self.isAllFramesLoaded) {
-        SDImageFrame *frame = [self.loadedAnimatedImageFrames objectAtIndex:index];
-        return frame.image;
+        SDImageFrame *imageFrame = [self.loadedAnimatedImageFrames objectAtIndex:index];
+        frame = imageFrame.image;
+    } else {
+        frame = [self.animatedCoder animatedImageFrameAtIndex:index];
     }
-    return [self.animatedCoder animatedImageFrameAtIndex:index];
+    CFTimeInterval decodeDuration = (CACurrentMediaTime() - startTime) * 1000;
+    if (decodeDuration > 16) { // Log if decode takes longer than 16ms
+        NSLog(@"[SDAnimatedImage] Warning: Slow frame decode - frame %lu took %.2fms", 
+            (unsigned long)index, decodeDuration);
+    }
+    
+    return frame;
 }
 
 - (NSTimeInterval)animatedImageDurationAtIndex:(NSUInteger)index {
