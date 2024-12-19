@@ -428,7 +428,6 @@ static const CGFloat kDestSeemOverlap = 2.0f;   // the numbers of pixels to over
     if (!cgImage) {
         return NULL;
     }
-    NSLog(@"[SDImageCoderHelper] Starting decode for image %p", cgImage);
     
     // Check if image is already in optimal format for rendering
     BOOL needsDecode = NO;
@@ -449,10 +448,7 @@ static const CGFloat kDestSeemOverlap = 2.0f;   // the numbers of pixels to over
     
     if (!hasProperBitDepth || !hasProperAlpha || !hasProperAlignment) {
         needsDecode = YES;
-        NSLog(@"[SDImageCoderHelper] Image needs decode - bits:%zu/%zu, row:%zu, info:%lu, hasAlpha:%d", 
-            bitsPerComponent, bitsPerPixel, bytesPerRow, (unsigned long)bitmapInfo, hasAlpha);
     } else {
-        NSLog(@"[SDImageCoderHelper] Image already in optimal format, skipping decode");
         CGImageRetain(cgImage);
         return cgImage;
     }
@@ -480,7 +476,6 @@ static const CGFloat kDestSeemOverlap = 2.0f;   // the numbers of pixels to over
             break;
     }
     
-    NSLog(@"[SDImageCoderHelper] Creating context for image %p, size: %zux%zu, hasAlpha: %d", cgImage, newWidth, newHeight, hasAlpha);
     CGBitmapInfo contextBitmapInfo = [SDImageCoderHelper preferredPixelFormat:hasAlpha].bitmapInfo;
     // Calculate aligned bytes per row
     size_t bytesPerPixel = 4; // Always use 32-bit pixels (RGBA/RGBX)
@@ -498,11 +493,9 @@ static const CGFloat kDestSeemOverlap = 2.0f;   // the numbers of pixels to over
     CGAffineTransform transform = SDCGContextTransformFromOrientation(orientation, CGSizeMake(newWidth, newHeight));
     CGContextConcatCTM(context, transform);
     CGContextDrawImage(context, CGRectMake(0, 0, width, height), cgImage);
-    NSLog(@"[SDImageCoderHelper] Drawing took %.2fms for image %p", (CFAbsoluteTimeGetCurrent() - drawStart) * 1000, cgImage);
     
     CFAbsoluteTime createStart = CFAbsoluteTimeGetCurrent();
     CGImageRef newImageRef = CGBitmapContextCreateImage(context);
-    NSLog(@"[SDImageCoderHelper] Context image creation took %.2fms for image %p", (CFAbsoluteTimeGetCurrent() - createStart) * 1000, cgImage);
     CGContextRelease(context);
     
     return newImageRef;
